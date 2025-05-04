@@ -1,22 +1,20 @@
 use std::{
     env::{current_dir, current_exe},
     fs::{self, create_dir, exists},
+    num::NonZero,
     path::PathBuf,
 };
 
-use egui::{vec2, Color32, FontDefinitions, Id, Layout, Rect, Ui};
+use egui::{vec2, Color32, FontDefinitions, FontId, Id, Layout, Rect, Ui};
 use egui_modal::Modal;
 use egui_notify::Toasts;
 use subprocess::Exec;
 
-use crate::{error::Result, font::load_system_fonts};
-
-/// Data needed for multipass layout
-struct LayoutInfo {
-    combo_width: Option<f32>,
-    total_height: Option<f32>,
-    bgrp_width: Option<f32>,
-}
+use crate::{
+    error::Result,
+    font::load_system_fonts,
+    layout::{discard_layout_on_need, hori_centered, vert_centered},
+};
 
 /// Data needed for modal window that adds user
 struct ModalState {
@@ -35,7 +33,6 @@ impl Default for ModalState {
 
 /// All data needed by the application
 pub struct LauncherApp {
-    
     /// The directory contains the executable
     executable_dir: PathBuf,
 
@@ -48,8 +45,9 @@ pub struct LauncherApp {
     /// Previously selected user
     last_selected_user: Option<String>,
 
+    exit_on_launch: bool,
+
     user_add_modal_state: ModalState,
-    layout_info: LayoutInfo,
     toasts: Toasts,
 
     ctx_initialized: bool,
@@ -67,13 +65,9 @@ impl LauncherApp {
             current_user: None,
             last_selected_user: None,
             user_add_modal_state: ModalState::default(),
-            layout_info: LayoutInfo {
-                combo_width: None,
-                total_height: None,
-                bgrp_width: None,
-            },
             toasts: Toasts::default(),
             ctx_initialized: false,
+            exit_on_launch: false,
         };
 
         result.load_user_list()?;
@@ -211,13 +205,16 @@ impl LauncherApp {
     }
 
     /// Launch MajdataPlay.
-    fn launch_majdata(&self) -> Result<()> {
+    fn launch_majdata(&self, ctx: &egui::Context) -> Result<()> {
         if let Some(current_user) = &self.current_user {
             self.load_user_profile(current_user)?;
             Exec::cmd(self.executable_dir.join("MajdataPlay.exe"))
                 .cwd(&self.executable_dir)
                 .detached()
                 .popen()?;
+            if self.exit_on_launch {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
             Ok(())
         } else {
             Err(crate::error::LauncherError::NoUserPresentOnLaunch)
@@ -230,6 +227,9 @@ impl LauncherApp {
 
         let fonts = load_system_fonts(FontDefinitions::default());
         ctx.set_fonts(fonts);
+        ctx.options_mut(|opt| {
+            opt.max_passes = NonZero::new(10).unwrap();
+        });
     }
 }
 
@@ -240,36 +240,19 @@ impl eframe::App for LauncherApp {
             self.ctx_initialized = true;
         }
 
-        // Indicate of discarding current render frame (for layout calculation).
-        let mut discard_this = false;
-
         egui::CentralPanel::default().show(ctx, |ui| {
-            // Calculate layout to center entire UI vertically.
-            ui.advance_cursor_after_rect(egui::Rect::from_two_pos(
-                ui.cursor().min,
-                egui::pos2(
-                    ui.cursor().min.x,
-                    (ui.available_height() - self.layout_info.total_height.unwrap_or(0.)) / 2.,
-                ),
-            ));
-            let begin = ui.cursor().min.y;
+            vert_centered("body", ui, ctx, |ui| {
+                ui.with_layout(
+                    Layout::top_down(egui::Align::Center).with_main_align(egui::Align::Center),
+                    |ui| {
+                        ui.heading("MajdataPlay MultiUser Launcher");
+                        ui.advance_cursor_after_rect(Rect::from_two_pos(
+                            ui.cursor().min,
+                            ui.cursor().min + vec2(0., 5.),
+                        ));
 
-            ui.with_layout(
-                Layout::top_down(egui::Align::Center).with_main_align(egui::Align::Center),
-                |ui| {
-                    ui.heading("MajdataPlay MultiUser Launcher");
-                    ui.advance_cursor_after_rect(Rect::from_two_pos(
-                        ui.cursor().min,
-                        ui.cursor().min + vec2(0., 5.),
-                    ));
-
-                    let ir = egui::Area::new(Id::new("what"))
-                        .current_pos(
-                            ui.next_widget_position()
-                                - vec2(self.layout_info.combo_width.unwrap_or(0.) / 2., 0.),
-                        )
-                        .show(ctx, |ui| {
-                            let ir = egui::ComboBox::from_id_salt(0)
+                        hori_centered("combo_center", ui, ctx, |ui| {
+                            egui::ComboBox::from_id_salt("combo_user")
                                 .selected_text(format!(
                                     "{}",
                                     if let Some(user) = &self.current_user {
@@ -287,80 +270,36 @@ impl eframe::App for LauncherApp {
                                         );
                                     }
                                 });
-                            if let Some(width) = self.layout_info.combo_width {
-                                if width != ir.response.rect.width() {
-                                    self.layout_info.combo_width = Some(ir.response.rect.width());
-                                    discard_this = true;
+                        });
+                        // The button group below the ComboBox.
+                        hori_centered("btn_grp", ui, ctx, |ui| {
+                            let modal = Modal::new(ctx, "add_user");
+                            modal.show(|ui| {
+                                self.user_add_modal(ctx, &modal, ui);
+                            });
+
+                            if ui.button("Add User").clicked() {
+                                modal.open();
+                            }
+                            if ui.button("Start MajdataPlay").clicked() {
+                                if let Err(err) = self.launch_majdata(ctx) {
+                                    self.toasts
+                                        .error(format!("Failed to launch MajdataPlay: {}", err));
                                 }
-                            } else {
-                                self.layout_info.combo_width = Some(ir.response.rect.width());
-                                discard_this = true;
                             }
                         });
-                    ui.advance_cursor_after_rect(ir.response.rect);
 
-                    // The button group below the ComboBox.
-                    ui.horizontal(|ui| {
-                        // Also some calculation to center entire button group.
-                        ui.advance_cursor_after_rect(Rect::from_two_pos(
-                            ui.cursor().min,
-                            ui.cursor().min
-                                + vec2(
-                                    (ui.available_width()
-                                        - self.layout_info.bgrp_width.unwrap_or(0.))
-                                        / 2.,
-                                    0.,
-                                ),
-                        ));
-                        let begin = ui.cursor().min.x;
-
-                        let modal = Modal::new(ctx, "add_user");
-                        modal.show(|ui| {
-                            self.user_add_modal(ctx, &modal, ui);
+                        hori_centered("checkbox_exit_on_launch", ui, ctx, |ui| {
+                            ui.checkbox(&mut self.exit_on_launch, "Exit on launch");
                         });
-
-                        if ui.button("Add User").clicked() {
-                            modal.open();
-                        }
-                        if ui.button("Start MajdataPlay").clicked() {
-                            if let Err(err) = self.launch_majdata() {
-                                self.toasts
-                                    .error(format!("Failed to launch MajdataPlay: {}", err));
-                            }
-                        }
-
-                        let end = ui.cursor().min.x;
-                        if let Some(last_width) = self.layout_info.bgrp_width {
-                            if last_width != end - begin {
-                                self.layout_info.bgrp_width = Some(end - begin);
-                                discard_this = true;
-                            }
-                        } else {
-                            self.layout_info.bgrp_width = Some(end - begin);
-                            discard_this = true;
-                        }
-                    });
-                },
-            );
-            let end = ui.cursor().min.y;
-
-            if let Some(height) = self.layout_info.total_height {
-                if height != end - begin {
-                    self.layout_info.total_height = Some(end - begin);
-                    discard_this = true;
-                }
-            } else {
-                self.layout_info.total_height = Some(end - begin);
-                discard_this = true;
-            }
+                    },
+                );
+            });
         });
 
-        if discard_this {
-            ctx.request_discard("Recalculate layout");
-        }
-
         // Update the profile if changed.
-        'update_profile: for _ in 0..1 { // Why don't Rust have do...while loops !? That sucks.
+        'update_profile: for _ in 0..1 {
+            // Why don't Rust have do...while loops !? That sucks.
             if self.last_selected_user != self.current_user {
                 if let Some(last_user) = &self.last_selected_user {
                     if let Err(err) = self.save_user_profile(&last_user) {
@@ -385,5 +324,6 @@ impl eframe::App for LauncherApp {
         }
 
         self.toasts.show(ctx);
+        discard_layout_on_need(ctx);
     }
 }

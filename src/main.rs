@@ -2,10 +2,12 @@
 
 use anyhow::anyhow;
 use eframe::App;
+use egui::{vec2, ViewportBuilder};
 use majdataplay_multiuser::{app::LauncherApp, error::Result};
 
 fn main() -> Result<()> {
     let options = eframe::NativeOptions {
+        viewport: ViewportBuilder::default().with_inner_size(vec2(400., 250.)),
         ..Default::default()
     };
     eframe::run_native(
