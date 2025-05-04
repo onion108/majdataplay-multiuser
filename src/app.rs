@@ -4,12 +4,12 @@ use std::{
     path::PathBuf,
 };
 
-use egui::{Color32, Id, Layout, Rect, Ui, vec2};
+use egui::{vec2, Color32, FontDefinitions, Id, Layout, Rect, Ui};
 use egui_modal::Modal;
 use egui_notify::Toasts;
 use subprocess::Exec;
 
-use crate::error::Result;
+use crate::{error::Result, font::load_system_fonts};
 
 /// Data needed for multipass layout
 struct LayoutInfo {
@@ -51,6 +51,8 @@ pub struct LauncherApp {
     user_add_modal_state: ModalState,
     layout_info: LayoutInfo,
     toasts: Toasts,
+
+    ctx_initialized: bool,
 }
 
 impl LauncherApp {
@@ -71,6 +73,7 @@ impl LauncherApp {
                 bgrp_width: None,
             },
             toasts: Toasts::default(),
+            ctx_initialized: false,
         };
 
         result.load_user_list()?;
@@ -220,11 +223,22 @@ impl LauncherApp {
             Err(crate::error::LauncherError::NoUserPresentOnLaunch)
         }
     }
+
+    /// Initialize `egui` context.
+    fn init_ctx(&mut self, ctx: &egui::Context) {
+        ctx.set_pixels_per_point(3.);
+
+        let fonts = load_system_fonts(FontDefinitions::default());
+        ctx.set_fonts(fonts);
+    }
 }
 
 impl eframe::App for LauncherApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        ctx.set_pixels_per_point(3.);
+        if !self.ctx_initialized {
+            self.init_ctx(ctx);
+            self.ctx_initialized = true;
+        }
 
         // Indicate of discarding current render frame (for layout calculation).
         let mut discard_this = false;
