@@ -7,3 +7,5 @@ This launcher need to be placed in the same directory as `MajdataPlay.exe`. Laun
 All user data are stored in `UserProfile/` directory, edit subdirectories' names or delete them to make changes.
 Notice that first launch will wipe out all existing global data. You can preserve them by manually create an `UserData` directory, create an subdirectory with desired username, and put `settings.json` and `Majdata.db.db.db.db..... (a lot of db)` into the subdirectory.
 
+The game [MajdataPlay](https://github.com/LingFeng-bbben/MajdataPlay) isn't included in this directory.
+
