@@ -5,7 +5,7 @@ use std::{
     path::PathBuf,
 };
 
-use egui::{vec2, Color32, FontDefinitions, FontId, Id, Layout, Rect, Ui};
+use egui::{vec2, Color32, FontDefinitions, Key, Layout, Rect, Ui};
 use egui_modal::Modal;
 use egui_notify::Toasts;
 use subprocess::Exec;
@@ -47,6 +47,8 @@ pub struct LauncherApp {
 
     exit_on_launch: bool,
 
+    ui_zoom: f32,
+
     user_add_modal_state: ModalState,
     toasts: Toasts,
 
@@ -68,6 +70,7 @@ impl LauncherApp {
             toasts: Toasts::default(),
             ctx_initialized: false,
             exit_on_launch: false,
+            ui_zoom: 2.5,
         };
 
         result.load_user_list()?;
@@ -205,13 +208,15 @@ impl LauncherApp {
     }
 
     /// Launch MajdataPlay.
-    fn launch_majdata(&self, ctx: &egui::Context) -> Result<()> {
+    fn launch_majdata(&self, ctx: &egui::Context, test_mode: bool) -> Result<()> {
         if let Some(current_user) = &self.current_user {
             self.load_user_profile(current_user)?;
-            Exec::cmd(self.executable_dir.join("MajdataPlay.exe"))
-                .cwd(&self.executable_dir)
-                .detached()
-                .popen()?;
+            let mut cmd =
+                Exec::cmd(self.executable_dir.join("MajdataPlay.exe")).cwd(&self.executable_dir);
+            if test_mode {
+                cmd = cmd.arg("--test-mode");
+            }
+            cmd.detached().popen()?;
             if self.exit_on_launch {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
@@ -223,7 +228,7 @@ impl LauncherApp {
 
     /// Initialize `egui` context.
     fn init_ctx(&mut self, ctx: &egui::Context) {
-        ctx.set_pixels_per_point(3.);
+        ctx.set_pixels_per_point(self.ui_zoom);
 
         let fonts = load_system_fonts(FontDefinitions::default());
         ctx.set_fonts(fonts);
@@ -271,6 +276,11 @@ impl eframe::App for LauncherApp {
                                     }
                                 });
                         });
+                        ui.advance_cursor_after_rect(Rect::from_two_pos(
+                            ui.cursor().min,
+                            ui.cursor().min + vec2(0., 5.),
+                        ));
+
                         // The button group below the ComboBox.
                         hori_centered("btn_grp", ui, ctx, |ui| {
                             let modal = Modal::new(ctx, "add_user");
@@ -282,7 +292,13 @@ impl eframe::App for LauncherApp {
                                 modal.open();
                             }
                             if ui.button("Start MajdataPlay").clicked() {
-                                if let Err(err) = self.launch_majdata(ctx) {
+                                if let Err(err) = self.launch_majdata(ctx, false) {
+                                    self.toasts
+                                        .error(format!("Failed to launch MajdataPlay: {}", err));
+                                }
+                            }
+                            if ui.button("Start MajdataPlay In Test Mode").clicked() {
+                                if let Err(err) = self.launch_majdata(ctx, true) {
                                     self.toasts
                                         .error(format!("Failed to launch MajdataPlay: {}", err));
                                 }
@@ -325,5 +341,11 @@ impl eframe::App for LauncherApp {
 
         self.toasts.show(ctx);
         discard_layout_on_need(ctx);
+
+        let (modifiers, delta) = ctx.input(|inp| (inp.modifiers, inp.raw_scroll_delta.y));
+        if modifiers.command {
+            self.ui_zoom = (self.ui_zoom + delta * 0.01).clamp(0.1, 10.0);
+            ctx.set_pixels_per_point(self.ui_zoom);
+        }
     }
 }
