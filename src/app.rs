@@ -5,7 +5,7 @@ use std::{
     path::PathBuf,
 };
 
-use egui::{vec2, Color32, FontDefinitions, Key, Layout, Rect, Ui};
+use egui::{vec2, Color32, FontDefinitions, Layout, Rect, Ui};
 use egui_modal::Modal;
 use egui_notify::Toasts;
 use subprocess::Exec;
@@ -98,6 +98,7 @@ impl LauncherApp {
 
         if !self.users.is_empty() {
             self.current_user = Some(self.users[0].clone());
+            self.load_user_profile(&self.users[0])?;
         }
 
         Ok(())
@@ -346,6 +347,12 @@ impl eframe::App for LauncherApp {
         if modifiers.command {
             self.ui_zoom = (self.ui_zoom + delta * 0.01).clamp(0.1, 10.0);
             ctx.set_pixels_per_point(self.ui_zoom);
+        }
+
+        if ctx.input(|input| input.viewport().close_requested()) {
+            if let Some(current_user) = &self.current_user {
+                _ = self.save_user_profile(&current_user);
+            }
         }
     }
 }
