@@ -1,11 +1,10 @@
 use std::{
     env::{current_dir, current_exe},
-    fs::{self, create_dir, exists},
     num::NonZero,
     path::PathBuf,
 };
 
-use egui::{vec2, Color32, FontDefinitions, Layout, Rect, Ui};
+use egui::{Color32, FontDefinitions, Layout, Rect, Ui, vec2};
 use egui_modal::Modal;
 use egui_notify::Toasts;
 use subprocess::Exec;
@@ -14,6 +13,7 @@ use crate::{
     error::Result,
     font::load_system_fonts,
     layout::{discard_layout_on_need, hori_centered, vert_centered},
+    user_model::UserManager,
 };
 
 /// Data needed for modal window that adds user
@@ -36,8 +36,8 @@ pub struct LauncherApp {
     /// The directory contains the executable
     executable_dir: PathBuf,
 
-    /// All users loaded
-    users: Vec<String>,
+    /// User data manager
+    user_manager: UserManager,
 
     /// Current selected user
     current_user: Option<String>,
@@ -62,8 +62,8 @@ impl LauncherApp {
         executable_dir.pop();
 
         let mut result = Self {
-            executable_dir,
-            users: Vec::new(),
+            executable_dir: executable_dir.clone(),
+            user_manager: UserManager::new(executable_dir.join("UserProfile"), &executable_dir),
             current_user: None,
             last_selected_user: None,
             user_add_modal_state: ModalState::default(),
@@ -81,95 +81,13 @@ impl LauncherApp {
     /// Loads user list from `UserProfile/`. Every subdirectory under the directory is considered
     /// an user profile.
     fn load_user_list(&mut self) -> Result<()> {
-        self.users.clear();
-        let user_profile_path = self.executable_dir.join("UserProfile");
-        if exists(&user_profile_path).unwrap_or(false) {
-            for i in fs::read_dir(&user_profile_path)? {
-                let i = i?;
-                if let Ok(metadata) = i.metadata() {
-                    if metadata.is_dir() {
-                        self.users.push(i.file_name().to_string_lossy().to_string());
-                    }
-                }
-            }
-        } else {
-            create_dir(self.executable_dir.join("UserProfile"))?;
-        }
-
-        if !self.users.is_empty() {
-            self.current_user = Some(self.users[0].clone());
-            self.load_user_profile(&self.users[0])?;
+        self.user_manager.load_user_list()?;
+        if !self.user_manager.users.is_empty() {
+            self.current_user = Some(self.user_manager.users[0].clone());
+            self.user_manager.sync_global(&self.user_manager.users[0])?;
         }
 
         Ok(())
-    }
-
-    /// Check if user exists.
-    fn user_exists(&self, name: &str) -> bool {
-        let user_profile_path = self.executable_dir.join("UserProfile");
-        exists(user_profile_path.join(name)).unwrap_or(false)
-    }
-
-    /// Create a new user.
-    fn create_user(&mut self, name: &str) -> Result<()> {
-        let user_profile_path = self.executable_dir.join("UserProfile");
-        if !exists(user_profile_path.join(name)).unwrap_or(false) {
-            create_dir(user_profile_path.join(name))?;
-            self.users.push(name.to_owned());
-        }
-        Ok(())
-    }
-
-    /// Load given file from user directory to global.
-    fn load_user_file(&self, name: &str, filename: &str) -> Result<()> {
-        if name.is_empty() || !self.user_exists(name) {
-            return Err(crate::error::LauncherError::UserNotFound(name.into()));
-        }
-
-        let profile_path = self.executable_dir.join("UserProfile").join(name);
-        if exists(profile_path.join(filename)).unwrap_or(false) {
-            fs::copy(
-                profile_path.join(filename),
-                self.executable_dir.join(filename),
-            )?;
-        } else {
-            if exists(self.executable_dir.join(filename)).unwrap_or(false) {
-                fs::remove_file(self.executable_dir.join(filename))?;
-            }
-        }
-        Ok(())
-    }
-
-    /// Save given file form global to user directory.
-    fn save_user_file(&self, name: &str, filename: &str) -> Result<()> {
-        if name.is_empty() || !self.user_exists(name) {
-            return Err(crate::error::LauncherError::UserNotFound(name.into()));
-        }
-
-        let profile_path = self.executable_dir.join("UserProfile").join(name);
-        if exists(self.executable_dir.join(filename)).unwrap_or(false) {
-            fs::copy(
-                self.executable_dir.join(filename),
-                profile_path.join(filename),
-            )?;
-        } else {
-            if exists(profile_path.join(filename)).unwrap_or(false) {
-                fs::remove_file(profile_path.join(filename))?;
-            }
-        }
-        Ok(())
-    }
-
-    /// Load user data to global.
-    fn load_user_profile(&self, name: &str) -> Result<()> {
-        self.load_user_file(name, "settings.json")
-            .and_then(|_| self.load_user_file(name, "MajDatabase.db.db.db.db.db.db.db.db.db.db.db.db.db.db.db.db.db.db.db.db.db.db.db.db.db.db.db.db"))
-    }
-
-    /// Save user data to global.
-    fn save_user_profile(&self, name: &str) -> Result<()> {
-        self.save_user_file(name, "settings.json")
-            .and_then(|_| self.load_user_file(name, "MajDatabase.db.db.db.db.db.db.db.db.db.db.db.db.db.db.db.db.db.db.db.db.db.db.db.db.db.db.db.db"))
     }
 
     /// The UI of adding user.
@@ -192,11 +110,11 @@ impl LauncherApp {
                         return;
                     }
 
-                    if self.user_exists(&username) {
+                    if self.user_manager.user_exists(&username) {
                         self.user_add_modal_state.error_desc =
                             Some(format!("User {} exists", username));
                     } else {
-                        if let Err(err) = self.create_user(&username) {
+                        if let Err(err) = self.user_manager.create_user(&username) {
                             self.user_add_modal_state.error_desc =
                                 Some(format!("Failed to create user {} due to {}", username, err));
                         } else {
@@ -211,7 +129,7 @@ impl LauncherApp {
     /// Launch MajdataPlay.
     fn launch_majdata(&self, ctx: &egui::Context, test_mode: bool) -> Result<()> {
         if let Some(current_user) = &self.current_user {
-            self.load_user_profile(current_user)?;
+            self.user_manager.sync_global(current_user)?;
             let mut cmd =
                 Exec::cmd(self.executable_dir.join("MajdataPlay.exe")).cwd(&self.executable_dir);
             if test_mode {
@@ -268,7 +186,7 @@ impl eframe::App for LauncherApp {
                                     }
                                 ))
                                 .show_ui(ui, |ui| {
-                                    for user in &self.users {
+                                    for user in &self.user_manager.users {
                                         ui.selectable_value(
                                             &mut self.current_user,
                                             Some(user.clone()),
@@ -315,11 +233,10 @@ impl eframe::App for LauncherApp {
         });
 
         // Update the profile if changed.
-        'update_profile: for _ in 0..1 {
-            // Why don't Rust have do...while loops !? That sucks.
+        'update_profile: {
             if self.last_selected_user != self.current_user {
                 if let Some(last_user) = &self.last_selected_user {
-                    if let Err(err) = self.save_user_profile(&last_user) {
+                    if let Err(err) = self.user_manager.sync_user(&last_user) {
                         self.toasts
                             .error(format!("Failed to save user profile: {}", err));
                         self.current_user = self.last_selected_user.clone();
@@ -328,7 +245,7 @@ impl eframe::App for LauncherApp {
                 }
 
                 if let Some(current_user) = &self.current_user {
-                    if let Err(err) = self.load_user_profile(&current_user) {
+                    if let Err(err) = self.user_manager.sync_global(&current_user) {
                         self.toasts
                             .error(format!("Failed to load user profile: {}", err));
                         self.current_user = self.last_selected_user.clone();
@@ -351,7 +268,7 @@ impl eframe::App for LauncherApp {
 
         if ctx.input(|input| input.viewport().close_requested()) {
             if let Some(current_user) = &self.current_user {
-                _ = self.save_user_profile(&current_user);
+                _ = self.user_manager.sync_user(&current_user);
             }
         }
     }

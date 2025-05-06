@@ -2,7 +2,9 @@ use std::sync::Arc;
 use std::{collections::HashMap, fs::read};
 
 use egui::{FontData, FontDefinitions};
-use font_kit::{family_name::FamilyName, handle::Handle, properties::Properties, source::SystemSource};
+use font_kit::{
+    family_name::FamilyName, handle::Handle, properties::Properties, source::SystemSource,
+};
 
 fn load_font_family(family_names: &[&str]) -> Option<Vec<u8>> {
     let system_source = SystemSource::new();

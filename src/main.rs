@@ -2,7 +2,7 @@
 
 use anyhow::anyhow;
 use eframe::App;
-use egui::{vec2, ViewportBuilder};
+use egui::{ViewportBuilder, vec2};
 use majdataplay_multiuser::{app::LauncherApp, error::Result};
 
 fn main() -> Result<()> {
