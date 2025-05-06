@@ -235,22 +235,26 @@ impl eframe::App for LauncherApp {
         // Update the profile if changed.
         'update_profile: {
             if self.last_selected_user != self.current_user {
-                if let Some(last_user) = &self.last_selected_user {
-                    if let Err(err) = self.user_manager.sync_user(&last_user) {
-                        self.toasts
-                            .error(format!("Failed to save user profile: {}", err));
-                        self.current_user = self.last_selected_user.clone();
-                        break 'update_profile;
-                    }
+                if let Some(Err(err)) = self
+                    .last_selected_user
+                    .as_ref()
+                    .map(|inner| self.user_manager.sync_user(inner))
+                {
+                    self.toasts
+                        .error(format!("Failed to save user profile: {}", err));
+                    self.current_user = self.last_selected_user.clone();
+                    break 'update_profile;
                 }
 
-                if let Some(current_user) = &self.current_user {
-                    if let Err(err) = self.user_manager.sync_global(&current_user) {
-                        self.toasts
-                            .error(format!("Failed to load user profile: {}", err));
-                        self.current_user = self.last_selected_user.clone();
-                        break 'update_profile;
-                    }
+                if let Some(Err(err)) = self
+                    .current_user
+                    .as_ref()
+                    .map(|inner| self.user_manager.sync_global(inner))
+                {
+                    self.toasts
+                        .error(format!("Failed to load user profile: {}", err));
+                    self.current_user = self.last_selected_user.clone();
+                    break 'update_profile;
                 }
 
                 self.last_selected_user = self.current_user.clone();
@@ -267,9 +271,10 @@ impl eframe::App for LauncherApp {
         }
 
         if ctx.input(|input| input.viewport().close_requested()) {
-            if let Some(current_user) = &self.current_user {
-                _ = self.user_manager.sync_user(&current_user);
-            }
+            _ = self
+                .current_user
+                .as_ref()
+                .map(|inner| self.user_manager.sync_user(inner));
         }
     }
 }
